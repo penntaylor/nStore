@@ -1,8 +1,8 @@
-nStore
-===
-Treat files as files, no matter where they are.
+# nStore
 
-Currently supports
+Treat files in python as files, no matter where they are.
+
+Supports
 * local files
 * AWS S3.
 
@@ -13,8 +13,8 @@ Future support intended for:
 * http/s (read-only)
 * ???
 
-Examples
----
+## Examples
+
 ```python
 import nstore
 
@@ -23,6 +23,7 @@ with nstore.access("s3://my-bucket/some/file/far/away.txt", "r") as f:
 ```
 will print the contents of `away.txt` just as if it were a local file
 
+---
 
 Writing to files works too:
 ```python
@@ -37,12 +38,16 @@ will print
 Some text in the file!
 ```
 
+---
+
 Files don't have to be remote:
 ```python
 with nstore.access("rel/path/to/foo.json", "r") as f:
     print(f.read())
 ```
 works exactly as though `nstore.access` were replaced by `open`.
+
+---
 
 Need to work with largish files and prefer to open them multiple times for reading? No problem, just tell nStore it's OK to keep the file in the cache:
 ```python
