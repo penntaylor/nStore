@@ -7,11 +7,10 @@ Supports
 * AWS S3.
 
 Future support intended for:
-* Dropbox
-* Google Drive
+* Google Cloud Storage
+* Azure Blob Storage
 * ftp
 * http/s (read-only)
-* ???
 
 ## Examples
 
@@ -21,7 +20,7 @@ import nstore
 with nstore.access("s3://my-bucket/some/file/far/away.txt", "r") as f:
     print(f.read())
 ```
-will print the contents of `away.txt` just as if it were a local file
+will print the contents of `away.txt` as if it were a local file
 
 ---
 
@@ -49,7 +48,7 @@ works exactly as though `nstore.access` were replaced by `open`.
 
 ---
 
-Need to work with largish files and prefer to open them multiple times for reading? No problem, just tell nStore it's OK to keep the file in the cache:
+Have a workflow in which files are repeatedly opened and closed for reading? Tell nStore it's OK to keep the file in the cache to prevent downloading it before each access:
 ```python
 fname = "s3://my-bucket/bigfile.jpg"
 
