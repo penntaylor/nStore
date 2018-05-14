@@ -4,6 +4,7 @@ import logging
 import pathlib
 import shutil
 import tempfile
+from typing import (Generator, List, Tuple, Union)
 
 import boto3
 
@@ -15,16 +16,12 @@ APPENDMODES = ["a", "ab", "at"]
 
 cacheDir = tempfile.TemporaryDirectory(prefix="nstore.")
 
-@contextmanager
-def access(path, mode="r", usecache=False, **args):
-    """Opens local as well as remote files using a common interface. Read mode
-       and write mode are mutually exclusive.
+pathlike = Union[str, pathlib.Path]
 
-       To read and write to the same file, it is necessary to *access*
-       it twice: once in read mode, close it, then open it back up in write
-       mode. While slightly inconvenient for some uses, this greatly
-       simplifies the logic (and bug surface) involved in keeping local and
-       remote files syncronized.
+@contextmanager
+def access(path:pathlike, mode:str="r", usecache:bool=False, **args) -> Generator:
+    """Opens local and remote files using a common interface. Read mode
+       and write mode are mutually exclusive.
     """
     supportedmodes = READMODES + WRITEMODES + APPENDMODES
     if mode not in supportedmodes:
@@ -47,7 +44,7 @@ def access(path, mode="r", usecache=False, **args):
         clean(localpath)
 
 
-def copy(srcpath, dstpath):
+def copy(srcpath:pathlike, dstpath:pathlike) -> None:
     """Copy a file from srcpath to dstpath, where either (or both) path may refer to
        a remote file.
     """
@@ -75,6 +72,8 @@ def copy(srcpath, dstpath):
             s3 = boto3.resource("s3")
             s3.Object(bucket, key).upload_file(srcfpath)
     else:
+        # TODO: move this setup code into a separate function
+        #       so as to clarify the overall logic of src-dst interactions
         if dstfpath.startswith(cacheDir.name):
             tmpdstfpath = pathlib.Path(dstfpath)
         else:
@@ -92,7 +91,7 @@ def copy(srcpath, dstpath):
             raise RuntimeError("Unsupported protocol: {}".format(dstprotocol))
 
 
-def clean(path="*"):
+def clean(path:pathlike="*") -> None:
     """Remove cached files matching globbing pattern in *path*.
 
        WARNING:
@@ -106,17 +105,17 @@ def clean(path="*"):
 
     # Insert cachedir at head if it isn't there:
     if not patt.startswith(cacheDir.name):
-        patt = pathlib.Path(cacheDir.name, patt)
+        patt = str(pathlib.Path(cacheDir.name, patt))
 
     # Attempt to ensure we're really in the cachedir
-    patt = pathlib.Path(patt).resolve()
-    if not str(patt).startswith(cacheDir.name):
+    pattP = pathlib.Path(patt).resolve()
+    if not str(pattP).startswith(cacheDir.name):
         raise RuntimeError("Attempted to clean file(s) outside of nStore's cache!")
 
     # Get pattern relative to cachedir so globbing will work
-    patt = pathlib.Path(patt).relative_to(cacheDir.name)
+    pattP = pattP.relative_to(cacheDir.name)
 
-    for f in pathlib.Path(cacheDir.name).glob(str(patt)):
+    for f in pathlib.Path(cacheDir.name).glob(str(pattP)):
         if f.is_file():
             f.unlink()
         elif f.is_dir():
@@ -125,14 +124,14 @@ def clean(path="*"):
             continue # symlinks can get us here, not sure what else
 
 
-def delete(path):
+def delete(path:pathlike) -> None:
     """Attempt to delete the canonical source file.
     """
     pass
 
 
 # pathlike -> bool -> str -> (Path, bool)
-def _localize(path, usecache, mode):
+def _localize(path:pathlike, usecache:bool, mode:str) -> Tuple[pathlib.Path, bool]:
     # Remote files are added to a local cache. Already-local files are simply
     # handed back.
     # Returns a tuple containing
@@ -151,7 +150,7 @@ def _localize(path, usecache, mode):
     return (cachedpath, True)
 
 
-def _isDupe(srcprotocol, srcfpath, dstprotocol, dstfpath):
+def _isDupe(srcprotocol:str, srcfpath:str, dstprotocol:str, dstfpath:str) -> bool:
     if (srcprotocol == dstprotocol) and (srcfpath == dstfpath):
         return True
 
@@ -161,12 +160,12 @@ def _isDupe(srcprotocol, srcfpath, dstprotocol, dstfpath):
         sp = pathlib.Path(srcfpath).resolve()
         dp = pathlib.Path(dstfpath).resolve()
         if sp == dp:
-            return None
+            return True
 
     return False
 
 
-def _decompose(path):
+def _decompose(path:pathlike) -> Tuple[str, str]:
     # Decompose path into a protocol and an actual Path.
     # Paths are assumed to be in one of the following forms:
     # "a/local/file"
@@ -176,10 +175,10 @@ def _decompose(path):
         parts.insert(0, "file")
     # normalize all protocols to lowercase to simplify selection
     parts[0] = parts[0].lower()
-    return parts
+    return (parts[0], parts[1])
 
 
-def _decomposeS3(path):
+def _decomposeS3(path:pathlike) -> Tuple[str, str]:
     # Ensures we handle both "bucket/key" and "s3://bucket/key" variants
     _, paff = _decompose(path)
     parts = paff.split('/')
@@ -192,7 +191,7 @@ def _decomposeS3(path):
 # https://stackoverflow.com/a/44873382
 # Hashing is expensive, but it is less expensive than unnecessary network traffic
 # involving potentially large files.
-def _hashFile(path):
+def _hashFile(path:pathlike) -> str:
     h = hashlib.sha256()
     try:
         with open(path, 'rb', buffering=0) as f:
