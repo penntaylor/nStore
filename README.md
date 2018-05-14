@@ -44,7 +44,12 @@ Files don't have to be remote:
 with nstore.access("rel/path/to/foo.json", "r") as f:
     print(f.read())
 ```
-works exactly as though `nstore.access` were replaced by `open`.
+works exactly as though `nstore.access` were replaced by `open`. Specifying the protocol uri-style also works:
+
+```python
+with nstore.access("file://rel/path/to/foo.json", "r") as f:
+    print(f.read())
+```
 
 ---
 
