@@ -8,6 +8,8 @@ from typing import (Generator, List, Tuple, Union, Dict)
 
 import boto3
 
+from nstore.fileops import crackOpen
+
 from nstore.exceptions import (NstoreError, UnsupportedModeError,
                                InvalidAccessError, DeleteError,
                                UnsupportedProtocolError)
@@ -39,7 +41,7 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict={}, **ar
     if isCached and mode in (WRITEMODES + APPENDMODES):
         hashbefore = _hashFile(localpath)
 
-    with open(localpath, mode, **args) as f:
+    with crackOpen(localpath, mode, **args) as f:
         yield f
     # Send file back to source if we altered it
     if isCached and (mode in WRITEMODES + APPENDMODES):
