@@ -4,9 +4,13 @@ import logging
 import pathlib
 import shutil
 import tempfile
-from typing import (Generator, List, Tuple, Union)
+from typing import (Generator, List, Tuple, Union, Dict)
 
 import boto3
+
+from nstore.exceptions import (NstoreError, UnsupportedModeError,
+                               InvalidAccessError, DeleteError,
+                               UnsupportedProtocolError)
 
 # FIXME: Not handling compression yet
 
@@ -18,16 +22,18 @@ cacheDir = tempfile.TemporaryDirectory(prefix="nstore.")
 
 pathlike = Union[str, pathlib.Path]
 
+
+
 @contextmanager
-def access(path:pathlike, mode:str="r", usecache:bool=False, **args) -> Generator:
+def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict={}, **args) -> Generator:
     """Opens local and remote files using a common interface. Read mode
-       and write mode are mutually exclusive.
+       and write mode are mutually exclusive. Extra is passed down to copy when
+       temporarily localizing the file; see copy for details.
     """
     supportedmodes = READMODES + WRITEMODES + APPENDMODES
     if mode not in supportedmodes:
-        raise RuntimeError("Unsupported mode: {}; must be one of {}".
-                               format(mode, supportedmodes))
-    localpath, isCached = _localize(path, usecache, mode)
+        raise UnsupportedModeError(mode, supportedmodes)
+    localpath, isCached = _localize(path, usecache, mode, extra)
 
     # Hashing is wasted effort for readonly modes
     if isCached and mode in (WRITEMODES + APPENDMODES):
@@ -44,9 +50,11 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, **args) -> Generato
         clean(localpath)
 
 
-def copy(srcpath:pathlike, dstpath:pathlike) -> None:
+def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict={}) -> None:
     """Copy a file from srcpath to dstpath, where either (or both) path may refer to
-       a remote file.
+       a remote file. Extra is passed into the localization method for this
+       type. With files in S3, for example, extra becomes the ExtraArgs argument to
+       download/upload calls for setting things like RequesterPays.
     """
     srcprotocol, srcfpath = _decompose(srcpath)
     dstprotocol, dstfpath = _decompose(dstpath)
@@ -70,7 +78,7 @@ def copy(srcpath:pathlike, dstpath:pathlike) -> None:
         elif dstprotocol == "s3":
             bucket, key = _decomposeS3(dstfpath)
             s3 = boto3.resource("s3")
-            s3.Object(bucket, key).upload_file(srcfpath)
+            s3.Object(bucket, key).upload_file(srcfpath, ExtraArgs=extra)
     else:
         # TODO: move this setup code into a separate function
         #       so as to clarify the overall logic of src-dst interactions
@@ -83,12 +91,12 @@ def copy(srcpath:pathlike, dstpath:pathlike) -> None:
         if srcprotocol == "s3":
             bucket, key = _decomposeS3(srcfpath)
             s3 = boto3.resource("s3")
-            s3.Object(bucket, key).download_file(str(tmpdstfpath))
+            s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
             copy(tmpdstfpath, dstpath)
             if str(tmpdstfpath) != str(dstfpath):
                 clean(tmpdstfpath)
         else:
-            raise RuntimeError("Unsupported protocol: {}".format(dstprotocol))
+            raise UnsupportedProtocolError(dstprotocol)
 
 
 def clean(path:pathlike="*") -> None:
@@ -110,7 +118,8 @@ def clean(path:pathlike="*") -> None:
     # Attempt to ensure we're really in the cachedir
     pattP = pathlib.Path(patt).resolve()
     if not str(pattP).startswith(cacheDir.name):
-        raise RuntimeError("Attempted to clean file(s) outside of nStore's cache!")
+        raise InvalidAccessError(str(pattP),
+                                 "Attempted to clean file(s) outside of nStore's cache!")
 
     # Get pattern relative to cachedir so globbing will work
     pattP = pattP.relative_to(cacheDir.name)
@@ -127,11 +136,24 @@ def clean(path:pathlike="*") -> None:
 def delete(path:pathlike) -> None:
     """Attempt to delete the canonical source file.
     """
-    pass
+    protocol, fpath = _decompose(str(path))
+    if protocol == "file":
+        try:
+            Path(fpath).unlink()
+        except Exception as e:
+            raise DeleteError(str(path), str(e))
+    elif protocol == "s3":
+        try:
+            s3 = boto3.resource("s3")
+            s3.Object(*_decomposeS3(fpath)).delete()
+        except Exception as e:
+            raise DeleteError(str(path), str(e))
+    else:
+        raise UnsupportedProtocolError(protocol)
 
 
 # pathlike -> bool -> str -> (Path, bool)
-def _localize(path:pathlike, usecache:bool, mode:str) -> Tuple[pathlib.Path, bool]:
+def _localize(path:pathlike, usecache:bool, mode:str, extra:Dict={}) -> Tuple[pathlib.Path, bool]:
     # Remote files are added to a local cache. Already-local files are simply
     # handed back.
     # Returns a tuple containing
@@ -145,7 +167,7 @@ def _localize(path:pathlike, usecache:bool, mode:str) -> Tuple[pathlib.Path, boo
     cachedpath = pathlib.Path(cacheDir.name, fpath)
 
     if (mode not in WRITEMODES) and not (usecache and cachedpath.exists()):
-        copy(path, cachedpath)
+        copy(path, cachedpath, extra=extra)
 
     return (cachedpath, True)
 
