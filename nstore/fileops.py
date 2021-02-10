@@ -2,10 +2,11 @@ from contextlib import contextmanager
 import gzip
 import mimetypes
 import pathlib
+from typing import Union, Any, IO, Generator, TextIO
 
 
 @contextmanager
-def crackOpen(path, mode="r", **args):
+def crackOpen(path: Union[pathlib.Path, str], mode: str="r", **args: Any) -> Generator[Union[gzip.GzipFile, TextIO, IO[Any]], None, None]:
     """Context manager to handle opening plain files or gzipped files
        with minimal ceremony; use it as you would `open` with the caveat
        that read mode and write mode should be treated separately, and
@@ -21,5 +22,5 @@ def crackOpen(path, mode="r", **args):
         with gzip.open(path, mode, **args) as f:
             yield f
     else:
-        with open(path, mode, **args) as f:
-            yield f
+        with open(path, mode, **args) as g:
+            yield g

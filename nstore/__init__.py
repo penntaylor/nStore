@@ -4,7 +4,7 @@ import logging
 import pathlib
 import shutil
 import tempfile
-from typing import (Generator, List, Tuple, Union, Dict)
+from typing import (Generator, List, Tuple, Union, Dict, Any, IO)
 
 import boto3
 
@@ -27,7 +27,7 @@ pathlike = Union[str, pathlib.Path]
 
 
 @contextmanager
-def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict={}, **args) -> Generator:
+def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any]={}, **args:Any) -> Generator[IO[Any], None, None]:
     """Opens local and remote files using a common interface. Read mode
        and write mode are mutually exclusive. Extra is passed down to copy when
        temporarily localizing the file; see copy for details.
@@ -52,7 +52,7 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict={}, **ar
         clean(localpath)
 
 
-def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict={}) -> None:
+def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
     """Copy a file from srcpath to dstpath, where either (or both) path may refer to
        a remote file. Extra is passed into the localization method for this
        type. With files in S3, for example, extra becomes the ExtraArgs argument to
@@ -141,7 +141,7 @@ def delete(path:pathlike) -> None:
     protocol, fpath = _decompose(str(path))
     if protocol == "file":
         try:
-            Path(fpath).unlink()
+            pathlib.Path(fpath).unlink()
         except Exception as e:
             raise DeleteError(str(path), str(e))
     elif protocol == "s3":
@@ -155,7 +155,7 @@ def delete(path:pathlike) -> None:
 
 
 # pathlike -> bool -> str -> (Path, bool)
-def _localize(path:pathlike, usecache:bool, mode:str, extra:Dict={}) -> Tuple[pathlib.Path, bool]:
+def _localize(path:pathlike, usecache:bool, mode:str, extra:Dict[Any, Any]={}) -> Tuple[pathlib.Path, bool]:
     # Remote files are added to a local cache. Already-local files are simply
     # handed back.
     # Returns a tuple containing
