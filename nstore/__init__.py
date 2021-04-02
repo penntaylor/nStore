@@ -37,6 +37,10 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any
         raise UnsupportedModeError(mode, supportedmodes)
     localpath, isCached = _localize(path, usecache, mode, extra)
 
+    # Ensure parent dirs exist if we're writing
+    if mode in WRITEMODES:
+        pathlib.Path(localpath).parent.mkdir(parents=True, exist_ok=True)
+
     # Hashing is wasted effort for readonly modes
     if isCached and mode in (WRITEMODES + APPENDMODES):
         hashbefore = _hashFile(localpath)
