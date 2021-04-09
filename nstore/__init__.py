@@ -51,7 +51,7 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any
     if isCached and (mode in WRITEMODES + APPENDMODES):
         hashafter = _hashFile(localpath)
         if hashafter != hashbefore:
-            copy(localpath, path)
+            copy(localpath, path, extra)
     if isCached and not usecache:
         clean(localpath)
 
