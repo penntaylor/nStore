@@ -1,10 +1,11 @@
 from contextlib import contextmanager
+import gzip
 import hashlib
 import logging
 import pathlib
 import shutil
 import tempfile
-from typing import (Generator, List, Tuple, Union, Dict, Any, IO)
+from typing import (Generator, List, Tuple, Union, Dict, Any, IO, TextIO)
 
 import boto3
 
@@ -27,7 +28,7 @@ pathlike = Union[str, pathlib.Path]
 
 
 @contextmanager
-def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any]={}, **args:Any) -> Generator[IO[Any], None, None]:
+def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any]={}, **args:Any) -> Generator[Union[gzip.GzipFile, TextIO, IO[Any]], None, None]:
     """Opens local and remote files using a common interface. Read mode
        and write mode are mutually exclusive. Extra is passed down to copy when
        temporarily localizing the file; see copy for details.

@@ -1,3 +1,5 @@
+from typing import List
+
 class NstoreError(Exception):
     """Base exception for nStore
     """
@@ -6,7 +8,7 @@ class NstoreError(Exception):
 class UnsupportedModeError(NstoreError):
     """Raised when attempting to access a file with an invalid mode.
     """
-    def __init__(self, mode: str, allowed: bool):
+    def __init__(self, mode: str, allowed: List[str]):
         self.mode = mode
         self.allowed = allowed
 
