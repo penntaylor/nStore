@@ -103,7 +103,7 @@ def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
             if str(tmpdstfpath) != str(dstfpath):
                 clean(tmpdstfpath)
         else:
-            raise UnsupportedProtocolError(dstprotocol)
+            raise UnsupportedProtocolError(f"{dstprotocol} in destination {dstpath}; src = {srcpath}")
 
 
 def clean(path:pathlike="*") -> None:
@@ -156,7 +156,7 @@ def delete(path:pathlike) -> None:
         except Exception as e:
             raise DeleteError(str(path), str(e))
     else:
-        raise UnsupportedProtocolError(protocol)
+        raise UnsupportedProtocolError(f"{protocol} in {path}")
 
 
 # pathlike -> bool -> str -> (Path, bool)
