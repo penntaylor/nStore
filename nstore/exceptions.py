@@ -44,3 +44,13 @@ class UnsupportedProtocolError(NstoreError):
 
     def __str__(self) -> str:
         return f"Unsupported protocol: {self.protocol}"
+
+class S3Error(NstoreError):
+    """Raised when the S3 client encounters an error
+    """
+    def __init__(self, path: str, msg: str) -> None:
+        self.path = path
+        self.msg = msg
+
+    def __str__(self) -> str:
+        return f"{self.path}: {self.msg}"

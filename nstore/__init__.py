@@ -8,11 +8,12 @@ import tempfile
 from typing import (Generator, List, Tuple, Union, Dict, Any, IO, TextIO)
 
 import boto3
+import botocore.exceptions
 
 from nstore.fileops import crackOpen
 
 from nstore.exceptions import (NstoreError, UnsupportedModeError,
-                               InvalidAccessError, DeleteError,
+                               InvalidAccessError, DeleteError, S3Error,
                                UnsupportedProtocolError)
 
 # FIXME: Not handling compression yet
@@ -98,7 +99,10 @@ def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
         if srcprotocol == "s3":
             bucket, key = _decomposeS3(srcfpath)
             s3 = boto3.resource("s3")
-            s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
+            try:
+                s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
+            except botocore.exceptions.ClientError as e:
+                raise S3Error(srcfpath, str(e))
             copy(tmpdstfpath, dstpath)
             if str(tmpdstfpath) != str(dstfpath):
                 clean(tmpdstfpath)
