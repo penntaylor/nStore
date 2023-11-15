@@ -2,6 +2,8 @@ from contextlib import contextmanager
 import gzip
 import hashlib
 import logging
+import multiprocessing
+import os
 import pathlib
 import shutil
 import tempfile
@@ -15,8 +17,8 @@ from nstore.fileops import crackOpen
 from nstore.exceptions import (NstoreError, UnsupportedModeError,
                                InvalidAccessError, DeleteError, S3Error,
                                UnsupportedProtocolError)
+import nstore.pool as pool
 
-# FIXME: Not handling compression yet
 
 READMODES = ["r", "rb", "rt"]
 WRITEMODES = ["w", "wb", "wt"]
@@ -26,18 +28,43 @@ cacheDir = tempfile.TemporaryDirectory(prefix="nstore.")
 
 pathlike = Union[str, pathlib.Path]
 
+REGION = os.environ.get( "REGION", "us-east-1" )
+NUM_CORES = multiprocessing.cpu_count()
+BOTO3_SESSION_POOL_SIZE = os.environ.get(
+  "BOTO3_SESSION_POOL_SIZE", NUM_CORES * 5 )
 
+_s3_pool = pool.ObjectPool(
+  lambda: boto3.session.Session().resource( 's3', region_name = REGION ),
+  max_size = BOTO3_SESSION_POOL_SIZE )
 
 @contextmanager
-def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any]={}, **args:Any) -> Generator[Union[gzip.GzipFile, TextIO, IO[Any]], None, None]:
+def access(path:pathlike,
+           mode:str="r",
+           usecache:bool=False,
+           usepool:bool=True,
+           extra:Dict[Any, Any]={},
+           **args:Any) -> Generator[Union[gzip.GzipFile, TextIO, IO[Any]], None, None]:
     """Opens local and remote files using a common interface. Read mode
-       and write mode are mutually exclusive. Extra is passed down to copy when
-       temporarily localizing the file; see copy for details.
+       and write mode are mutually exclusive.
+
+       Extra is passed down to copy when temporarily localizing the file; see
+       nstore.copy() for details.
+
+       Usecache controls whether a local copy of the file is maintained after
+       the context ends; doing so allows for faster access if opening/closing
+       the same file repeatedly.
+
+       Usepool controls whether to use a session pool for S3 objects;
+       doing so allows noticeably faster access if reading or writing many
+       small files as it avoids repeated setup/teardown of connections to S3.
+       However, keeping files "open" for a long period of time, may lead to
+       pool exhaustion and deadlock. Pool size can be set via env var
+       BOTO3_SESSION_POOL_SIZE; the default is 5*(number of cores).
     """
     supportedmodes = READMODES + WRITEMODES + APPENDMODES
     if mode not in supportedmodes:
         raise UnsupportedModeError(mode, supportedmodes)
-    localpath, isCached = _localize(path, usecache, mode, extra)
+    localpath, isCached = _localize(path, usecache, mode, usepool, extra)
 
     # Ensure parent dirs exist if we're writing
     if mode in WRITEMODES:
@@ -53,12 +80,12 @@ def access(path:pathlike, mode:str="r", usecache:bool=False, extra:Dict[Any, Any
     if isCached and (mode in WRITEMODES + APPENDMODES):
         hashafter = _hashFile(localpath)
         if hashafter != hashbefore:
-            copy(localpath, path, extra)
+            copy(localpath, path, extra, usepool)
     if isCached and not usecache:
         clean(localpath)
 
 
-def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
+def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}, usepool:bool=True) -> None:
     """Copy a file from srcpath to dstpath, where either (or both) path may refer to
        a remote file. Extra is passed into the localization method for this
        type. With files in S3, for example, extra becomes the ExtraArgs argument to
@@ -85,8 +112,12 @@ def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
             shutil.copyfile(srcfpath, dstfpath)
         elif dstprotocol == "s3":
             bucket, key = _decomposeS3(dstfpath)
-            s3 = boto3.resource("s3")
-            s3.Object(bucket, key).upload_file(srcfpath, ExtraArgs=extra)
+            if usepool:
+                with pool.get(_s3_pool) as s3:
+                    s3.Object(bucket, key).upload_file(srcfpath, ExtraArgs=extra)
+            else:
+                s3 = boto3.resource("s3")
+                s3.Object(bucket, key).upload_file(srcfpath, ExtraArgs=extra)
     else:
         # TODO: move this setup code into a separate function
         #       so as to clarify the overall logic of src-dst interactions
@@ -98,9 +129,14 @@ def copy(srcpath:pathlike, dstpath:pathlike, extra:Dict[Any, Any]={}) -> None:
 
         if srcprotocol == "s3":
             bucket, key = _decomposeS3(srcfpath)
-            s3 = boto3.resource("s3")
+            #s3 = boto3.resource("s3")
             try:
-                s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
+                if usepool:
+                    with pool.get(_s3_pool) as s3:
+                        s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
+                else:
+                    s3 = boto3.resource("s3")
+                    s3.Object(bucket, key).download_file(str(tmpdstfpath), ExtraArgs=extra)
             except botocore.exceptions.ClientError as e:
                 raise S3Error(srcfpath, str(e))
             copy(tmpdstfpath, dstpath)
@@ -144,8 +180,9 @@ def clean(path:pathlike="*") -> None:
             continue # symlinks can get us here, not sure what else
 
 
-def delete(path:pathlike) -> None:
+def delete(path:pathlike, usepool:bool=True) -> None:
     """Attempt to delete the canonical source file.
+    See nstore.access for details of usepool option.
     """
     protocol, fpath = _decompose(str(path))
     if protocol == "file":
@@ -155,8 +192,12 @@ def delete(path:pathlike) -> None:
             raise DeleteError(str(path), str(e))
     elif protocol == "s3":
         try:
-            s3 = boto3.resource("s3")
-            s3.Object(*_decomposeS3(fpath)).delete()
+            if usepool:
+                with pool.get(_s3_pool) as s3:
+                    s3.Object(*_decomposeS3(fpath)).delete()
+            else:
+                s3 = boto3.resource("s3")
+                s3.Object(*_decomposeS3(fpath)).delete()
         except Exception as e:
             raise DeleteError(str(path), str(e))
     else:
@@ -164,7 +205,11 @@ def delete(path:pathlike) -> None:
 
 
 # pathlike -> bool -> str -> (Path, bool)
-def _localize(path:pathlike, usecache:bool, mode:str, extra:Dict[Any, Any]={}) -> Tuple[pathlib.Path, bool]:
+def _localize(path:pathlike,
+              usecache:bool,
+              mode:str,
+              usepool:bool=True,
+              extra:Dict[Any, Any]={}) -> Tuple[pathlib.Path, bool]:
     # Remote files are added to a local cache. Already-local files are simply
     # handed back.
     # Returns a tuple containing
@@ -178,7 +223,7 @@ def _localize(path:pathlike, usecache:bool, mode:str, extra:Dict[Any, Any]={}) -
     cachedpath = pathlib.Path(cacheDir.name, fpath)
 
     if (mode not in WRITEMODES) and not (usecache and cachedpath.exists()):
-        copy(path, cachedpath, extra=extra)
+        copy(path, cachedpath, extra=extra, usepool=usepool)
 
     return (cachedpath, True)
 
